@@ -36,26 +36,34 @@ def cost_matrix(x,y,p=2):
     c = tf.reduce_sum((tf.abs(x_col-y_lin))**p,axis=2)
     return c
 
-def sinkhorn_loss(x,y,epsilon,n,niter,p=2):
+def sinkhorn_loss(x, y, x_weights=None, y_weights=None, epsilon=0.01, niter=200, p=2):
     """
-    Given two emprical measures with n points each with locations x and y
-    outputs an approximation of the OT cost with regularization parameter epsilon
-    niter is the max. number of steps in sinkhorn loop
+    Description:
+        Given two emprical measures with locations x and y
+        outputs an approximation of the OT cost with regularization parameter epsilon
+        niter is the max. number of steps in sinkhorn loop
     
-    Inputs:
+    Args:
         x,y:  The input sets representing the empirical measures.  Each are a tensor of shape (n,D)
+        x_weights, y_weights: weights for ensembles x and y
         epsilon:  The entropy weighting factor in the sinkhorn distance, epsilon -> 0 gets closer to the true wasserstein distance
-        n:  The number of support points in the empirical measures
         niter:  The number of iterations in the sinkhorn algorithm, more iterations yields a more accurate estimate
-    Outputs:
+        p: p value used to define the cost in Wasserstein distance
     
+    Returns:
+        The optimal cost or the (Wasserstein distance) ** p
     """
     # The Sinkhorn algorithm takes as input three variables :
     C = cost_matrix(x, y,p=p)  # Wasserstein cost function
     
     # both marginals are fixed with equal weights
-    mu = tf.constant(1.0/n,shape=[n])
-    nu = tf.constant(1.0/n,shape=[n])
+    if x_weights is None:
+        n = x.shape[0]
+        x_weights = tf.constant(1.0/n,shape=[n])
+
+    if y_weights is None:
+        n = y.shape[0]
+        y_weights = tf.constant(1.0/n,shape=[n])
     # Elementary operations
     def M(u,v):
         "Modified cost for logarithmic updates"
@@ -65,10 +73,10 @@ def sinkhorn_loss(x,y,epsilon,n,niter,p=2):
         return tf.reduce_logsumexp(A,axis=1,keepdims=True)
     
     # Actual Sinkhorn loop
-    u, v = 0. * mu, 0. * nu
+    u, v = 0. * x_weights, 0. * y_weights
     for i in range(niter):
-        u = epsilon * (tf.math.log(mu) - tf.squeeze(lse(M(u, v)) )  ) + u
-        v = epsilon * (tf.math.log(nu) - tf.squeeze( lse(tf.transpose(M(u, v))) ) ) + v
+        u = epsilon * (tf.math.log(x_weights) - tf.squeeze(lse(M(u, v)) )  ) + u
+        v = epsilon * (tf.math.log(y_weights) - tf.squeeze( lse(tf.transpose(M(u, v))) ) ) + v
     
     u_final,v_final = u,v
     pi = tf.exp(M(u_final,v_final))
