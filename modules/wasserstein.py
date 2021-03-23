@@ -29,25 +29,25 @@ def z_score(x):
     x_normalized = (x - mean_vals)/std_vals
     return x_normalized
 
-def cost_matrix(x,y,p=2):
+def cost_matrix(x, y, p=2):
     "Returns the cost matrix C_{ij}=|x_i - y_j|^p"
     x_col = tf.expand_dims(x,1)
     y_lin = tf.expand_dims(y,0)
     c = tf.reduce_sum((tf.abs(x_col-y_lin))**p,axis=2)
     return c
 
-def sinkhorn_loss(x, y, x_weights=None, y_weights=None, epsilon=0.01, niter=200, p=2):
+def sinkhorn_loss(x, y, x_weights=None, y_weights=None, epsilon=0.01, num_iter=200, p=2):
     """
     Description:
         Given two emprical measures with locations x and y
         outputs an approximation of the OT cost with regularization parameter epsilon
-        niter is the max. number of steps in sinkhorn loop
+        num_iter is the max. number of steps in sinkhorn loop
     
     Args:
         x,y:  The input sets representing the empirical measures.  Each are a tensor of shape (n,D)
         x_weights, y_weights: weights for ensembles x and y
         epsilon:  The entropy weighting factor in the sinkhorn distance, epsilon -> 0 gets closer to the true wasserstein distance
-        niter:  The number of iterations in the sinkhorn algorithm, more iterations yields a more accurate estimate
+        num_iter:  The number of iterations in the sinkhorn algorithm, more iterations yields a more accurate estimate
         p: p value used to define the cost in Wasserstein distance
     
     Returns:
@@ -74,7 +74,7 @@ def sinkhorn_loss(x, y, x_weights=None, y_weights=None, epsilon=0.01, niter=200,
     
     # Actual Sinkhorn loop
     u, v = 0. * x_weights, 0. * y_weights
-    for i in range(niter):
+    for i in range(num_iter):
         u = epsilon * (tf.math.log(x_weights) - tf.squeeze(lse(M(u, v)) )  ) + u
         v = epsilon * (tf.math.log(y_weights) - tf.squeeze( lse(tf.transpose(M(u, v))) ) ) + v
     
