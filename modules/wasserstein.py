@@ -83,9 +83,8 @@ def sinkhorn_loss(x, y, x_weights=None, y_weights=None, epsilon=0.01, num_iters=
     cost = tf.reduce_sum(pi*C)
     return cost
 
-def sinkhorn_from_product(x,epsilon,n,niter,z_score=False):
-    y = resample_rows_per_column(x)
-    if z_score:
-        x = z_score(x)
-        y = z_score(y)
-    return sinkhorn_loss(x,y,epsilon,n,niter)
+def sinkhorn_div(x, y, alpha=None, beta=None, epsilon=0.01, num_iters=50, p=2):
+    OT_alpha_beta = sinkhorn_loss(x, y, alpha, beta, epsilon, num_iters, p)
+    OT_alpha_alpha = sinkhorn_loss(x, x, alpha, alpha, epsilon, num_iters, p)
+    OT_beta_beta = sinkhorn_loss(y, y, beta, beta, epsilon, num_iters, p)
+    return OT_alpha_beta - 0.5 * OT_alpha_alpha - 0.5 * OT_beta_beta
