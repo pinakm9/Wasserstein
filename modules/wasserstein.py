@@ -1,33 +1,5 @@
 import tensorflow as tf
 import numpy as np
-from itertools import permutations
-
-def sample_integers(n, shape):
-    sample = tf.random_uniform(shape, minval=0, maxval=tf.cast(n, 'float32'))
-    sample = tf.cast(sample, 'int32')
-    return sample
-
-def resample_rows_per_column(x):
-    """Permute all rows for each column independently."""
-    n_batch = tf.shape(x)[0]
-    n_dim = tf.shape(x)[1]
-    row_indices = sample_integers(n_batch, (n_batch * n_dim,))
-    col_indices = tf.tile(tf.range(n_dim), [n_batch])
-    indices = tf.transpose(tf.stack([row_indices, col_indices]))
-    x_perm = tf.gather_nd(x, indices)
-    x_perm = tf.reshape(x_perm, (n_batch, n_dim))
-    return x_perm
-
-def z_score(x):
-    """
-    Z_scores each dimension of the data (across axis 0)
-    """
-    #mean_vals = tf.reduce_mean(x,axis=0,keep_dims=True)
-    #std_vals = tf.sqrt(tf.reduce_var(x,axis=0,keep_dims=True))
-    mean_vals,var_vals = tf.nn.moments(x,axes=[0],keep_dims=True)
-    std_vals = tf.sqrt(var_vals)
-    x_normalized = (x - mean_vals)/std_vals
-    return x_normalized
 
 def cost_matrix(x, y, p=2):
     "Returns the cost matrix C_{ij}=|x_i - y_j|^p"
@@ -41,7 +13,7 @@ def sinkhorn_loss(x, y, x_weights=None, y_weights=None, epsilon=0.01, num_iters=
     Description:
         Given two emprical measures with locations x and y
         outputs an approximation of the OT cost with regularization parameter epsilon
-        num_iters is the max. number of steps in sinkhorn loop
+        num_iter is the max. number of steps in sinkhorn loop
     
     Args:
         x,y:  The input sets representing the empirical measures.  Each are a tensor of shape (n,D)
@@ -54,7 +26,7 @@ def sinkhorn_loss(x, y, x_weights=None, y_weights=None, epsilon=0.01, num_iters=
         The optimal cost or the (Wasserstein distance) ** p
     """
     # The Sinkhorn algorithm takes as input three variables :
-    C = cost_matrix(x, y,p=p)  # Wasserstein cost function
+    C = cost_matrix(x, y, p=p)  # Wasserstein cost function
     
     # both marginals are fixed with equal weights
     if x_weights is None:
@@ -72,19 +44,94 @@ def sinkhorn_loss(x, y, x_weights=None, y_weights=None, epsilon=0.01, num_iters=
     def lse(A):
         return tf.reduce_logsumexp(A,axis=1,keepdims=True)
     
+    log_x_w = tf.math.log(x_weights)
+    log_y_w = tf.math.log(y_weights)
     # Actual Sinkhorn loop
-    u, v = tf.zeros_like(x_weights), tf.zeros_like(y_weights)
-    for i in range(num_iters):
-        u = epsilon * (tf.math.log(x_weights) - tf.squeeze(lse(M(u, v)) )  ) + u
-        v = epsilon * (tf.math.log(y_weights) - tf.squeeze( lse(tf.transpose(M(u, v))) ) ) + v
+    u, v = 0. * x_weights, 0. * y_weights
+    for _ in range(num_iters):
+        u = epsilon * (log_x_w - tf.squeeze(lse(M(u, v)) )  ) + u
+        v = epsilon * (log_y_w - tf.squeeze( lse(tf.transpose(M(u, v))) ) ) + v
     
-    u_final,v_final = u,v
-    pi = tf.exp(M(u_final,v_final))
+    #u_final,v_final = u,v
+    pi = tf.exp(M(u, v))
     cost = tf.reduce_sum(pi*C)
     return cost
 
+def compute_cost_matrix(x, y, p=2):
+    m, n = len(x), len(y)
+    c = np.ones((n, m))
+    for i in range(n):
+        for j in range(m):
+            c[i][j] = (np.abs(x[i] - y[j])**p).sum()
+    return c
+
+def lse(x):
+    return np.log(np.exp(x).sum())
+
+def sinkhorn_div_tf(x, y, alpha=None, beta=None, epsilon=0.01, num_iters=50, p=2):
+    c = cost_matrix(x, y, p=p)
+    n, m = x.shape[0], y.shape[0]
+    if alpha is None:
+        alpha = tf.fill((n), 1./n)
+
+    if beta is None:
+        beta = tf.fill((n), 1./n)
+
+    log_alpha = tf.expand_dims(tf.math.log(alpha), 1)
+    log_beta = tf.math.log(beta)
+
+    f, g = 0. * alpha, 0. * beta
+    for _ in range(num_iters):
+        f = - epsilon * tf.reduce_logsumexp(log_beta + (g - c) / epsilon, axis=1)
+        g = - epsilon * tf.reduce_logsumexp(log_alpha + (tf.expand_dims(f, 1) - c) / epsilon, axis=0)
+
+    OT_alpha_beta = tf.reduce_sum(f * alpha) + tf.reduce_sum(g * beta)
+    
+    c = cost_matrix(x, x, p=p)
+    f = 0. * alpha
+    log_alpha = tf.squeeze(log_alpha)
+    for _ in range(int(num_iters/5)):
+        f = 0.5 * (f - epsilon * tf.reduce_logsumexp(log_alpha + (f - c) / epsilon, axis=1) )
+
+    c = cost_matrix(y, y, p=p)
+    g = 0. * alpha
+    for _ in range(int(num_iters/5)):
+        g = 0.5 * (g - epsilon * tf.reduce_logsumexp(log_beta + (g - c) / epsilon, axis=1) )
+    
+    return OT_alpha_beta - tf.reduce_sum(f * alpha) - tf.reduce_sum(g * beta)
+
+
 def sinkhorn_div(x, y, alpha=None, beta=None, epsilon=0.01, num_iters=50, p=2):
-    OT_alpha_beta = sinkhorn_loss(x, y, alpha, beta, epsilon, num_iters, p)
-    OT_alpha_alpha = sinkhorn_loss(x, x, alpha, alpha, epsilon, num_iters, p)
-    OT_beta_beta = sinkhorn_loss(y, y, beta, beta, epsilon, num_iters, p)
-    return OT_alpha_beta - 0.5 * OT_alpha_alpha - 0.5 * OT_beta_beta
+    c = compute_cost_matrix(x, y, p=p)
+    n, m = len(x), len(y)
+    if alpha is None:
+        alpha = np.ones(n) / n
+
+    if beta is None:
+        beta = np.ones(m) / m 
+
+    log_alpha = np.log(alpha)
+    log_beta = np.log(beta)
+
+    f, g = 0. * alpha, 0. * beta
+    for _ in range(num_iters):
+        for i in range(n):
+            f[i] = - epsilon * lse(log_beta + (g - c[i, :]) / epsilon)
+        for j in range(m):
+            g[j] = - epsilon * lse(log_alpha + (f - c[:, j]) / epsilon)
+
+    OT_alpha_beta = np.dot(f, alpha) + np.dot(g, beta)
+
+    c = compute_cost_matrix(x, x, p=p)
+    f = 0. * alpha
+    for _ in range(int(num_iters/5)):
+        for i in range(n):
+            f[i] = 0.5 * (f[i] - epsilon * lse(log_alpha + (f - c[i, :]) / epsilon) )
+
+    c = compute_cost_matrix(y, y, p=p)
+    g = 0. * alpha
+    for _ in range(int(num_iters/5)):
+        for i in range(m):
+            g[i] = 0.5 * (g[i] - epsilon * lse(log_beta + (g - c[i, :]) / epsilon) )
+
+    return OT_alpha_beta - np.dot(f, alpha) - np.dot(g, beta)
