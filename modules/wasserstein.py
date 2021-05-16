@@ -1,5 +1,4 @@
 import tensorflow as tf
-import numpy as np
 
 def cost_matrix(x, y, p=2):
     "Returns the cost matrix C_{ij}=|x_i - y_j|^p"
@@ -57,17 +56,6 @@ def sinkhorn_loss(x, y, x_weights=None, y_weights=None, epsilon=0.01, num_iters=
     cost = tf.reduce_sum(pi*C)
     return cost
 
-def compute_cost_matrix(x, y, p=2):
-    m, n = len(x), len(y)
-    c = np.ones((n, m))
-    for i in range(n):
-        for j in range(m):
-            c[i][j] = (np.abs(x[i] - y[j])**p).sum()
-    return c
-
-def lse(x):
-    return np.log(np.exp(x).sum())
-
 def sinkhorn_div_tf(x, y, alpha=None, beta=None, epsilon=0.01, num_iters=50, p=2):
     c = cost_matrix(x, y, p=p)
     n, m = x.shape[0], y.shape[0]
@@ -81,57 +69,34 @@ def sinkhorn_div_tf(x, y, alpha=None, beta=None, epsilon=0.01, num_iters=50, p=2
     log_beta = tf.math.log(beta)
 
     f, g = 0. * alpha, 0. * beta
-    for _ in range(num_iters):
+    f_, iter = 1. * alpha, 0
+    while tf.norm(f - f_, ord=1) / tf.norm(f_, ord=1) > 1e-5 and iter < num_iters:
+        f_ = f
         f = - epsilon * tf.reduce_logsumexp(log_beta + (g - c) / epsilon, axis=1)
         g = - epsilon * tf.reduce_logsumexp(log_alpha + (tf.expand_dims(f, 1) - c) / epsilon, axis=0)
+        iter += 1
+    #print(iter)
 
     OT_alpha_beta = tf.reduce_sum(f * alpha) + tf.reduce_sum(g * beta)
     
     c = cost_matrix(x, x, p=p)
     f = 0. * alpha
+    f_, iter = 1. * alpha, 0
     log_alpha = tf.squeeze(log_alpha)
-    for _ in range(int(num_iters/5)):
+    while tf.norm(f - f_, ord=1) / tf.norm(f_, ord=1) > 1e-5 and iter < num_iters:
+        f_ = f
         f = 0.5 * (f - epsilon * tf.reduce_logsumexp(log_alpha + (f - c) / epsilon, axis=1) )
+        iter += 1
+    #print(iter)
 
     c = cost_matrix(y, y, p=p)
-    g = 0. * alpha
-    for _ in range(int(num_iters/5)):
+    g = 0. * beta
+    g_, iter = 1. * beta, 0
+    while tf.norm(g - g_, ord=1) / tf.norm(g_, ord=1) > 1e-5 and iter < num_iters:
+        g_ = g
         g = 0.5 * (g - epsilon * tf.reduce_logsumexp(log_beta + (g - c) / epsilon, axis=1) )
+        iter += 1
+    #print(iter)
     
     return OT_alpha_beta - tf.reduce_sum(f * alpha) - tf.reduce_sum(g * beta)
 
-
-def sinkhorn_div(x, y, alpha=None, beta=None, epsilon=0.01, num_iters=50, p=2):
-    c = compute_cost_matrix(x, y, p=p)
-    n, m = len(x), len(y)
-    if alpha is None:
-        alpha = np.ones(n) / n
-
-    if beta is None:
-        beta = np.ones(m) / m 
-
-    log_alpha = np.log(alpha)
-    log_beta = np.log(beta)
-
-    f, g = 0. * alpha, 0. * beta
-    for _ in range(num_iters):
-        for i in range(n):
-            f[i] = - epsilon * lse(log_beta + (g - c[i, :]) / epsilon)
-        for j in range(m):
-            g[j] = - epsilon * lse(log_alpha + (f - c[:, j]) / epsilon)
-
-    OT_alpha_beta = np.dot(f, alpha) + np.dot(g, beta)
-
-    c = compute_cost_matrix(x, x, p=p)
-    f = 0. * alpha
-    for _ in range(int(num_iters/5)):
-        for i in range(n):
-            f[i] = 0.5 * (f[i] - epsilon * lse(log_alpha + (f - c[i, :]) / epsilon) )
-
-    c = compute_cost_matrix(y, y, p=p)
-    g = 0. * alpha
-    for _ in range(int(num_iters/5)):
-        for i in range(m):
-            g[i] = 0.5 * (g[i] - epsilon * lse(log_beta + (g - c[i, :]) / epsilon) )
-
-    return OT_alpha_beta - np.dot(f, alpha) - np.dot(g, beta)
