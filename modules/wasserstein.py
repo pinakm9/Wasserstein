@@ -7,6 +7,11 @@ def cost_matrix(x, y, p=2):
     c = tf.reduce_sum((tf.abs(x_col-y_lin))**p,axis=2)
     return c
 
+def tf_round(x, decimals):
+    multiplier = tf.constant(10**decimals, dtype=x.dtype)
+    return tf.round(x * multiplier) / multiplier
+
+
 def sinkhorn_loss(x, y, x_weights=None, y_weights=None, epsilon=0.01, num_iters=200, p=2):
     """
     Description:
@@ -45,32 +50,31 @@ def sinkhorn_loss(x, y, x_weights=None, y_weights=None, epsilon=0.01, num_iters=
     
     log_x_w = tf.math.log(x_weights)
     log_y_w = tf.math.log(y_weights)
-    # Actual Sinkhorn loop
+
     u, v = 0. * x_weights, 0. * y_weights
     for _ in range(num_iters):
         u = epsilon * (log_x_w - tf.squeeze(lse(M(u, v)) )  ) + u
         v = epsilon * (log_y_w - tf.squeeze( lse(tf.transpose(M(u, v))) ) ) + v
     
-    #u_final,v_final = u,v
     pi = tf.exp(M(u, v))
     cost = tf.reduce_sum(pi*C)
     return cost
 
-def sinkhorn_div_tf(x, y, alpha=None, beta=None, epsilon=0.01, num_iters=50, p=2):
+def sinkhorn_div_tf(x, y, alpha=None, beta=None, epsilon=0.01, num_iters=200, p=2):
     c = cost_matrix(x, y, p=p)
-    n, m = x.shape[0], y.shape[0]
+ 
     if alpha is None:
-        alpha = tf.fill((n), 1./n)
+        alpha = tf.ones(x.shape[0], dtype=x.dtype) / x.shape[0]
 
     if beta is None:
-        beta = tf.fill((n), 1./n)
+        beta = tf.ones(y.shape[0], dtype=y.dtype) / y.shape[0]
 
     log_alpha = tf.expand_dims(tf.math.log(alpha), 1)
     log_beta = tf.math.log(beta)
 
     f, g = 0. * alpha, 0. * beta
     f_, iter = 1. * alpha, 0
-    while tf.norm(f - f_, ord=1) / tf.norm(f_, ord=1) > 1e-5 and iter < num_iters:
+    while tf.norm(f - f_, ord=1) / tf.norm(f_, ord=1) > 1e-3 and iter < num_iters:
         f_ = f
         f = - epsilon * tf.reduce_logsumexp(log_beta + (g - c) / epsilon, axis=1)
         g = - epsilon * tf.reduce_logsumexp(log_alpha + (tf.expand_dims(f, 1) - c) / epsilon, axis=0)
@@ -83,7 +87,7 @@ def sinkhorn_div_tf(x, y, alpha=None, beta=None, epsilon=0.01, num_iters=50, p=2
     f = 0. * alpha
     f_, iter = 1. * alpha, 0
     log_alpha = tf.squeeze(log_alpha)
-    while tf.norm(f - f_, ord=1) / tf.norm(f_, ord=1) > 1e-5 and iter < num_iters:
+    while tf.norm(f - f_, ord=1) / tf.norm(f_, ord=1) > 1e-3 and iter < num_iters:
         f_ = f
         f = 0.5 * (f - epsilon * tf.reduce_logsumexp(log_alpha + (f - c) / epsilon, axis=1) )
         iter += 1
@@ -92,11 +96,9 @@ def sinkhorn_div_tf(x, y, alpha=None, beta=None, epsilon=0.01, num_iters=50, p=2
     c = cost_matrix(y, y, p=p)
     g = 0. * beta
     g_, iter = 1. * beta, 0
-    while tf.norm(g - g_, ord=1) / tf.norm(g_, ord=1) > 1e-5 and iter < num_iters:
+    while tf.norm(g - g_, ord=1) / tf.norm(g_, ord=1) > 1e-3 and iter < num_iters:
         g_ = g
         g = 0.5 * (g - epsilon * tf.reduce_logsumexp(log_beta + (g - c) / epsilon, axis=1) )
         iter += 1
-    #print(iter)
-    
-    return OT_alpha_beta - tf.reduce_sum(f * alpha) - tf.reduce_sum(g * beta)
+    return tf_round(OT_alpha_beta - tf.reduce_sum(f * alpha) - tf.reduce_sum(g * beta), 5)
 
