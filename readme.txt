@@ -1,0 +1,1 @@
+Tensorflow implementations of entropy-regularized optimal transport and Sinkhorn divergence 
